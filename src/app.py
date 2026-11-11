@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import date, datetime
 
 import streamlit as st
+from sqlalchemy.orm import joinedload, selectinload
 
 try:
     from src.database import SessionLocal, initialize_database
@@ -103,29 +104,37 @@ def render_categories():
         submitted = st.form_submit_button("Salvar categoria")
 
     if submitted:
-        with SessionLocal() as session:
-            if selected_id:
-                item = session.get(Category, selected_id)
-                if item:
-                    item.name = name.strip()
-                    item.description = description.strip() or None
-                    item.is_active = is_active
-                    session.commit()
-                    st.success("Categoria atualizada com sucesso!")
-            else:
-                if name.strip():
-                    session.add(
-                        Category(
-                            name=name.strip(),
-                            description=description.strip() or None,
-                            is_active=is_active,
-                        )
-                    )
-                    session.commit()
-                    st.success("Categoria cadastrada com sucesso!")
+        category_name = name.strip()
+        if not category_name:
+            st.warning("Informe o nome da categoria.")
+        else:
+            with SessionLocal() as session:
+                duplicate_query = session.query(Category).filter(Category.name == category_name)
+                if selected_id:
+                    duplicate_query = duplicate_query.filter(Category.id != selected_id)
+
+                if duplicate_query.first():
+                    st.warning(f"Já existe uma categoria com o nome '{category_name}'.")
                 else:
-                    st.warning("Informe o nome da categoria.")
-            st.rerun()
+                    if selected_id:
+                        item = session.get(Category, selected_id)
+                        if item:
+                            item.name = category_name
+                            item.description = description.strip() or None
+                            item.is_active = is_active
+                            session.commit()
+                            st.success("Categoria atualizada com sucesso!")
+                    else:
+                        session.add(
+                            Category(
+                                name=category_name,
+                                description=description.strip() or None,
+                                is_active=is_active,
+                            )
+                        )
+                        session.commit()
+                        st.success("Categoria cadastrada com sucesso!")
+                    st.rerun()
 
     st.markdown("### Lista de categorias")
     if not categorias:
@@ -211,7 +220,12 @@ def render_clothes():
     with SessionLocal() as session:
         marcas = session.query(Brand).filter(Brand.is_active.is_(True)).order_by(Brand.name).all()
         categorias = session.query(Category).filter(Category.is_active.is_(True)).order_by(Category.name).all()
-        roupas = session.query(Clothing).order_by(Clothing.id.desc()).all()
+        roupas = (
+            session.query(Clothing)
+            .options(joinedload(Clothing.brand), selectinload(Clothing.categories))
+            .order_by(Clothing.id.desc())
+            .all()
+        )
 
     selected_id = st.selectbox(
         "Editar roupa existente",
@@ -238,7 +252,7 @@ def render_clothes():
             default=[cat.id for cat in (current.categories if current else [])],
             format_func=lambda value: next((c.name for c in categorias if c.id == value), str(value)),
         )
-        price_sale = st.number_input("Preço de venda", min_value=0.01, value=current.price_sale if current else 0.0, step=0.5)
+        price_sale = st.number_input("Preço de venda", min_value=0.01, value=current.price_sale if current else 0.01, step=0.5)
         price_cost = st.number_input("Preço de custo", min_value=0.0, value=current.price_cost if current else 0.0, step=0.5)
         is_active = st.checkbox("Ativa", value=current.is_active if current else True)
         submitted = st.form_submit_button("Salvar roupa")
@@ -298,7 +312,12 @@ def render_variations():
 
     with SessionLocal() as session:
         roupas = session.query(Clothing).order_by(Clothing.name).all()
-        variacoes = session.query(Variation).order_by(Variation.id.desc()).all()
+        variacoes = (
+            session.query(Variation)
+            .options(joinedload(Variation.clothing))
+            .order_by(Variation.id.desc())
+            .all()
+        )
 
     selected_id = st.selectbox(
         "Editar variação existente",
@@ -590,7 +609,12 @@ def render_sales():
     with SessionLocal() as session:
         clientes = session.query(Client).filter(Client.is_active.is_(True)).all()
         funcionarios = session.query(Employee).filter(Employee.is_active.is_(True)).all()
-        vendas = session.query(Sale).order_by(Sale.id.desc()).all()
+        vendas = (
+            session.query(Sale)
+            .options(joinedload(Sale.client))
+            .order_by(Sale.id.desc())
+            .all()
+        )
 
     selected_id = st.selectbox(
         "Editar venda existente",
